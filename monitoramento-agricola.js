@@ -95,6 +95,16 @@
       palette: ['a54b4b', 'dba56d', 'ead583', 'b5d47a', '5da756', '0b492d'],
       meaning: 'Menor ← resposta vegetativa → maior'}
   };
+  // K-means: 3 grupos com as bandas abaixo; classes ordenadas pelo NDVI médio.
+  var KMEANS = {
+    bands: ['B2', 'B3', 'B4', 'B8', 'B11', 'B12'],
+    clusters: 3,
+    samplesPerDate: 5000,
+    classNames: ['1 · NDVI médio menor', '2 · NDVI médio intermediário', '3 · NDVI médio maior'],
+    classColors: ['c9a66b', 'a6c96a', '1f7a3a'],
+    changeNames: ['Perda (classe desceu)', 'Sem mudança', 'Ganho (classe subiu)'],
+    changeColors: ['d7301f', 'bdbdbd', '1a9850']
+  };
   var CLASS = [
     {text: '1 · Valores negativos  [−1; 0[', color: '#bc5960'},
     {text: '2 · Muito baixa  [0; 0,2[', color: '#d7b74b'},
@@ -115,11 +125,12 @@
     pendingDraw: null, drawingSessionLayers: [], suppressDrawing: false, tool: 'navigate',
     aoiRequest: 0, aoiBounds: null, aoiImport: null, smoothing: C.defaultSmoothing,
     imports: {sources: [], byKey: {}, rows: {}, currentRows: [], source: null, version: 0},
+    kmeans: {active: false, version: 0, view: 'classes'},
     queue: [], running: 0, background: 0, sides: {}, ui: {}
   };
   // Mesmo as camadas vazias possuem as bandas esperadas pelos visualizadores.
-  var EMPTY = ee.Image.constant([0, 0, 0, 0, 0, 0, 0, 0, 0])
-    .rename(['B4', 'B3', 'B2', 'NDVI', 'NDWI', 'NDMI', 'EVI', 'SAVI', 'classe'])
+  var EMPTY = ee.Image.constant([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    .rename(['B4', 'B3', 'B2', 'NDVI', 'NDWI', 'NDMI', 'EVI', 'SAVI', 'classe', 'kclasse', 'mudanca'])
     .updateMask(ee.Image(0));
 
   // priority = consulta acionada pela interface; sem priority = lote de série.
@@ -383,12 +394,18 @@
         index: ui.Map.Layer(EMPTY, {}, 'Índice · sem cena', false),
         classes: ui.Map.Layer(EMPTY, {bands: ['classe'], min: 1, max: 5,
           palette: CLASS.map(function (x) { return x.color; })}, 'Classes NDVI', false),
+        kmeans: ui.Map.Layer(EMPTY, {bands: ['kclasse'], min: 1, max: 3,
+          palette: KMEANS.classColors}, 'K-means · 3 classes', false),
+        change: ui.Map.Layer(EMPTY, {bands: ['mudanca'], min: 1, max: 3,
+          palette: KMEANS.changeColors}, 'K-means · diferença entre datas', false),
         sources: ui.Map.Layer(EMPTY, {}, 'Talhões do import', false),
         outline: ui.Map.Layer(EMPTY, {}, 'Limite do talhão', false)
       };
       map.layers().add(side.layers.rgb);
       map.layers().add(side.layers.index);
       map.layers().add(side.layers.classes);
+      map.layers().add(side.layers.kmeans);
+      map.layers().add(side.layers.change);
       map.layers().add(side.layers.sources);
       map.layers().add(side.layers.outline);
       // Com o painel de talhões aberto, um clique no mapa escolhe a feição.
@@ -663,8 +680,9 @@
     // Um único controle no mapa impede o empilhamento dos dois elementos.
     // As colunas verticais intermediárias mantêm a barra e a pilha branca
     // em suas alturas naturais, sem herdar a altura do vizinho na linha.
+    createKMeansPanel();
     u.leftStack = ui.Panel({
-      widgets: [S.sides.left.ui.controls, u.geometryDrawer, u.layerDrawer],
+      widgets: [S.sides.left.ui.controls, u.geometryDrawer, u.layerDrawer, u.kmeansCard],
       layout: ui.Panel.Layout.flow('vertical'),
       style: {width: '260px', height: 'auto', padding: '0', margin: '0'}
     });
@@ -1181,6 +1199,7 @@
       S.ui.editorRGB.setShown(false); S.ui.editorRGB.setEeObject(EMPTY);
     }
     resetStatistics(side, text); updateView(side);
+    if (S.kmeans.active) resetKMeans('Aguardando uma cena em cada lado…');
   }
   function invalidateData(text) {
     // Datas novas preservam resultados da mesma geometria. Toda edição,
@@ -1304,6 +1323,7 @@
     updateView(side); updateVegetationPanel(side);
     // Selecionar uma cena só redesenha os marcadores; não recalcula a série.
     if (S.chartsOpen) renderIndexJob(S.indexJobs[S.chartIndex], true);
+    if (S.kmeans.active) S.ui.kmeansSchedule();
   }
   function renderRGB(side) {
     var rgb = visualImage(sceneProducts(side.id).rgb);
@@ -1425,6 +1445,170 @@
       note = 'Classes em pixels nativos, sem interpolação.\nCores e intervalos no cartão de distribuição do NDVI.';
     }
     u.legendNote.setValue(note);
+  }
+
+  // 6.1 K-MEANS (3 CLASSES) E MAPA DE DIFERENÇAS ---------------------------
+  // Um único modelo é treinado com amostras das duas cenas (esquerda e direita)
+  // e aplicado às duas; os grupos são renumerados pelo NDVI médio (1 = menor),
+  // então a classe 2 tem o mesmo significado nas duas datas. A diferença é
+  // classe(data mais recente) − classe(data mais antiga): perda, igual ou ganho.
+  function legendRow(color, text) {
+    return row([ui.Panel({style: {backgroundColor: '#' + color, width: '12px', height: '12px',
+      margin: '2px 6px 0 0'}}), label(text, {fontSize: '10px', stretch: 'horizontal'})]);
+  }
+  function createKMeansPanel() {
+    var u = S.ui;
+    u.kmeansStatus = label('', {fontSize: '10px', color: C.muted, whiteSpace: 'pre-wrap'});
+    u.kmeansClassesButton = button('Classes por data', function () { setKMeansView('classes'); }, true,
+      {stretch: 'horizontal'});
+    u.kmeansChangeButton = button('Mapa de diferenças', function () { setKMeansView('change'); }, false,
+      {stretch: 'horizontal'});
+    u.kmeansClassLegend = ui.Panel(KMEANS.classNames.map(function (name, i) {
+      return legendRow(KMEANS.classColors[i], name);
+    }), null, {margin: '2px 0', padding: '0'});
+    u.kmeansChangeRows = KMEANS.changeNames.map(function (name, i) {
+      var value = label('—', {fontSize: '10px', fontWeight: 'bold', textAlign: 'right'});
+      return {value: value, widget: row([ui.Panel({style: {backgroundColor: '#' + KMEANS.changeColors[i],
+        width: '12px', height: '12px', margin: '2px 6px 0 0'}}),
+        label(name, {fontSize: '10px', stretch: 'horizontal'}), value])};
+    });
+    u.kmeansChangeLegend = ui.Panel(u.kmeansChangeRows.map(function (item) { return item.widget; }),
+      null, {margin: '2px 0', padding: '0', shown: false});
+    u.kmeansCard = card([
+      label('K-means · 3 classes', {fontWeight: 'bold'}),
+      u.kmeansStatus,
+      row([u.kmeansClassesButton, u.kmeansChangeButton]),
+      u.kmeansClassLegend, u.kmeansChangeLegend,
+      label('Bandas B2, B3, B4, B8, B11, B12 (B11/B12 de 20 m amostradas na grade de 10 m). ' +
+        'Modelo único para as duas datas; classes ordenadas pelo NDVI médio de cada grupo.',
+        {fontSize: '9px', color: C.muted, whiteSpace: 'pre-wrap'})
+    ], {shown: false, margin: '5px 0 0'});
+    u.kmeansSchedule = ui.util.debounce(refreshKMeans, 300);
+  }
+  function setKMeansStatus(text, error) {
+    S.ui.kmeansStatus.setValue(text);
+    S.ui.kmeansStatus.style().set('color', error ? C.danger : C.muted);
+  }
+  function updateKMeansView() {
+    var K = S.kmeans, change = K.view === 'change';
+    eachSide(function (side) {
+      side.layers.kmeans.setShown(K.active && K.ready && !change);
+      side.layers.change.setShown(K.active && K.ready && change);
+    });
+    S.ui.kmeansClassLegend.style().set('shown', !change);
+    S.ui.kmeansChangeLegend.style().set('shown', change);
+    S.ui.kmeansClassesButton.style().set({backgroundColor: change ? '#f1f5f9' : C.blue,
+      color: change ? C.ink : '#ffffff'});
+    S.ui.kmeansChangeButton.style().set({backgroundColor: change ? C.blue : '#f1f5f9',
+      color: change ? '#ffffff' : C.ink});
+  }
+  function setKMeansView(view) { S.kmeans.view = view; updateKMeansView(); }
+  function resetKMeans(text, error) {
+    // Cancela respostas pendentes e retira as camadas da cena/talhão anterior.
+    S.kmeans.version++; S.kmeans.ready = false;
+    eachSide(function (side) {
+      side.layers.kmeans.setEeObject(EMPTY); side.layers.change.setEeObject(EMPTY);
+    });
+    S.ui.kmeansChangeRows.forEach(function (item) { item.value.setValue('—'); });
+    setKMeansStatus(text, error);
+    updateKMeansView();
+  }
+  function toggleKMeans() {
+    var K = S.kmeans;
+    K.active = !K.active;
+    S.ui.kmeansButton.setLabel(K.active ? 'Desativar K-means' : 'Ativar K-means');
+    S.ui.kmeansButton.style().set({backgroundColor: K.active ? C.blue : '#f1f5f9',
+      color: K.active ? '#ffffff' : C.ink});
+    S.ui.kmeansCard.style().set('shown', K.active);
+    if (K.active) refreshKMeans(); else resetKMeans('');
+  }
+  function kmeansInput(id) {
+    return sceneProducts(id).raw.select(KMEANS.bands).multiply(0.0001);
+  }
+  function refreshKMeans() {
+    var K = S.kmeans;
+    if (!K.active) return;
+    var left = S.sides.left, right = S.sides.right;
+    if (!S.aoiReady || !left.id || !right.id) {
+      resetKMeans('Selecione um talhão e uma cena em cada lado.'); return;
+    }
+    resetKMeans('Treinando o K-means com as duas cenas…');
+    var version = K.version, regionVersion = S.regionVersion, region = S.aoi;
+    var leftId = left.id, rightId = right.id;
+    var sameScene = leftId === rightId;
+    // A cena mais antiga é a referência da diferença (empate: lado esquerdo).
+    var early = left.metadata['system:time_start'] <= right.metadata['system:time_start'] ? left : right;
+    var late = early === left ? right : left;
+    var inputs = {left: kmeansInput(leftId), right: kmeansInput(rightId)};
+    function samples(image, seed) {
+      return image.sample({region: region, scale: 10, numPixels: KMEANS.samplesPerDate,
+        seed: seed, tileScale: C.tileScale, geometries: false});
+    }
+    var training = samples(inputs.left, 1).merge(samples(inputs.right, 2));
+    var clusterer = ee.Clusterer.wekaKMeans(KMEANS.clusters).train(training);
+    function current() {
+      return version === K.version && K.active && regionVersion === S.regionVersion &&
+        left.id === leftId && right.id === rightId;
+    }
+    enqueue(function () {
+      // Médias de B4 e B8 por grupo, para ordenar os grupos pelo NDVI médio.
+      return ee.Dictionary({size: training.size(), groups: ee.Dictionary(training.cluster(clusterer)
+        .reduceColumns(ee.Reducer.mean().repeat(2).group({groupField: 2, groupName: 'cluster'}),
+          ['B4', 'B8', 'cluster'])).get('groups')});
+    }, current, function (result, error) {
+      if (error || !result) {
+        resetKMeans('Falha no K-means: ' + errorText(error) +
+          '. Verifique se as duas cenas têm pixels válidos no talhão.', true);
+        return;
+      }
+      var groups = (result.groups || []).map(function (group) {
+        var red = group.mean && group.mean[0], nir = group.mean && group.mean[1];
+        var ndvi = finite(red) && finite(nir) && red + nir !== 0 ? (nir - red) / (nir + red) : null;
+        return {cluster: group.cluster, ndvi: ndvi};
+      }).filter(function (group) { return finite(group.cluster) && group.ndvi !== null; });
+      if (groups.length < KMEANS.clusters) {
+        resetKMeans('O K-means formou só ' + groups.length + ' grupo(s) distinto(s) com ' +
+          (result.size || 0) + ' amostras. O talhão pode ser pequeno ou homogêneo demais.', true);
+        return;
+      }
+      groups.sort(function (a, b) { return a.ndvi - b.ndvi; });
+      var from = groups.map(function (group) { return group.cluster; });
+      var to = groups.map(function (group, i) { return i + 1; });
+      function classes(key) {
+        return inputs[key].cluster(clusterer).remap(from, to).rename('kclasse');
+      }
+      var byKey = {left: classes('left'), right: classes('right')};
+      var delta = byKey[late.key].subtract(byKey[early.key]);
+      var change = delta.gt(0).add(delta.gte(0)).add(1).rename('mudanca');
+      // Classes são categóricas: sem suavização visual.
+      eachSide(function (side) {
+        side.layers.kmeans.setEeObject(byKey[side.key].clip(region));
+        side.layers.change.setEeObject(change.clip(region));
+      });
+      K.ready = true;
+      updateKMeansView();
+      setKMeansStatus('Classes prontas (' + result.size + ' amostras). Diferença: ' +
+        utc(late.metadata['system:time_start'], false) + ' − ' + utc(early.metadata['system:time_start'], false) +
+        (sameScene ? '\nAtenção: os dois lados mostram a mesma cena; não há diferença temporal.' : '') +
+        '\nCalculando áreas…', sameScene);
+      var area = ee.Image.pixelArea();
+      var stack = area.updateMask(change.mask()).rename('total');
+      [1, 2, 3].forEach(function (code) {
+        stack = stack.addBands(area.updateMask(change.eq(code)).rename('m' + code));
+      });
+      var projection = sceneProducts(early.id).raw.select('B4').projection();
+      enqueue(function () { return reduceOnGrid(stack, projection, region); }, current, function (sums, err) {
+        var base = S.ui.kmeansStatus.getValue().replace('\nCalculando áreas…', '');
+        if (err || !sums) { setKMeansStatus(base + '\nFalha nas áreas: ' + errorText(err), true); return; }
+        var total = finite(sums.total) ? sums.total : 0;
+        S.ui.kmeansChangeRows.forEach(function (item, i) {
+          var value = sums['m' + (i + 1)];
+          item.value.setValue(finite(value) && total > 0 ?
+            number(value / 10000, 2) + ' ha · ' + number(value / total * 100, 1) + '%' : '—');
+        });
+        setKMeansStatus(base + (total > 0 ? '' : '\nSem pixels válidos nas duas cenas.'), sameScene || !(total > 0));
+      }, true);
+    }, true);
   }
 
   // 7. ESTATÍSTICAS INDEPENDENTES, COM CACHE POR CENA E AOI -----------------
@@ -1856,7 +2040,8 @@
     u.status = label('Clique em “Selecionar talhão importado” para escolher um talhão.',
       {stretch: 'horizontal', margin: '4px 8px', color: C.muted});
     u.busy = label('✓ pronto', {margin: '4px 8px', color: C.muted, fontSize: '10px'});
-    u.statusRow = row([u.area, u.status, u.busy,
+    u.kmeansButton = button('Ativar K-means', toggleKMeans, false, {margin: '3px 1px'});
+    u.statusRow = row([u.area, u.status, u.busy, u.kmeansButton,
       button('Selecionar talhão importado', function () { openImportPanel(false); }, true, {margin: '3px 1px'})],
       {stretch: 'horizontal', backgroundColor: '#f8fafc', margin: '0', padding: '0 8px'});
     u.info = ui.Panel({widgets: [
