@@ -1545,7 +1545,7 @@
         seed: seed, tileScale: C.tileScale, geometries: false});
     }
     var training = samples(inputs.left, 1).merge(samples(inputs.right, 2));
-    var clusterer = ee.Clusterer.wekaKMeans(KMEANS.clusters).train(training);
+    var clusterer = ee.Clusterer.wekaKMeans(KMEANS.clusters).train(training, KMEANS.bands);
     function current() {
       return version === K.version && K.active && regionVersion === S.regionVersion &&
         left.id === leftId && right.id === rightId;
