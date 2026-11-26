@@ -17,7 +17,7 @@ Executa diretamente no **Google Earth Engine Code Editor**, sem instalação.
 |---|---|
 | **Talhões** | Seleção dos talhões importados (`ee.Geometry`, `ee.Feature`, `ee.FeatureCollection`) por lista, filtro por nome ou clique no mapa · área em hectares · desenho manual opcional |
 | **Imagens** | Pesquisa por período (30, 90, 180 ou 365 dias, ou datas livres) · listagem paginada das cenas · RGB e índices NDVI, NDWI, NDMI, EVI e SAVI |
-| **Comparação** | Dois mapas sincronizados com cortina deslizante ou quadros lado a lado · cena, índice e camadas independentes em cada lado |
+| **Comparação** | Dois mapas sincronizados com cortina deslizante · cena, índice e camadas independentes em cada lado |
 | **Estatísticas** | Distribuição do NDVI em cinco classes · área válida · média ponderada por área |
 | **Séries temporais** | Média espacial do índice escolhido em todas as cenas do período · temperatura e precipitação diárias (ERA5-Land) |
 | **Visualização** | Suavização visual opcional · escala de cores automática por cena · legendas com unidades e resolução |
@@ -53,7 +53,7 @@ Sem `campoNome`, o nome é procurado em atributos comuns (`nome`, `name`, `talha
 | **Selecionar talhão importado** | Barra de status | Abre o painel de talhões: fonte, filtro, lista e clique no mapa |
 | **Período** | Cabeçalho | Datas inclusivas ou atalhos de 30 a 365 dias |
 | **Suavização visual** | Cabeçalho | *Desativada* (pixels nativos), *Suave* (bilinear) ou *Intensificada* (bicúbica) |
-| **Barra lateral** | Mapa esquerdo | Navegar · talhões · gráficos · camadas · cortina/quadros |
+| **Barra lateral** | Mapa esquerdo | Navegar · talhões · gráficos · camadas |
 | **Série temporal e clima** | Abaixo do cabeçalho | Abre os gráficos; **Atualizar dados** retoma séries interrompidas |
 | **− / +** | Cartões | Recolhem ou expandem painéis |
 

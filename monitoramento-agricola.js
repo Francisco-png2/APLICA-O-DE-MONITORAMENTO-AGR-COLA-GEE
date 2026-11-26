@@ -121,7 +121,7 @@
     visualizationCache: {}, visualizationPending: {}, visualizationOrder: [],
     visualizationRegionVersion: 0,
     indexJobs: {}, climateJob: null, chartIndex: 'NDVI', chartsOpen: false,
-    wipe: true, drawingMode: false, drawingRequestVersion: 0, drawingSessionVersion: 0,
+    drawingMode: false, drawingRequestVersion: 0, drawingSessionVersion: 0,
     pendingDraw: null, drawingSessionLayers: [], suppressDrawing: false, tool: 'navigate',
     aoiRequest: 0, aoiBounds: null, aoiImport: null, smoothing: C.defaultSmoothing,
     imports: {sources: [], byKey: {}, rows: {}, currentRows: [], source: null, version: 0},
@@ -601,8 +601,7 @@
         navigate: 'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3',
         geometry: 'M4 6l12-3 5 12-13 6-4-15zM3 5h2v2H3zM15 2h2v2h-2zM20 14h2v2h-2zM7 20h2v2H7z',
         charts: 'M4 3v17h17M7 15l4-5 4 3 5-7',
-        layers: 'M3 8l9-5 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5',
-        compare: 'M3 4h18v16H3zM12 2v20M8 10l-2 2 2 2M16 10l2 2-2 2'
+        layers: 'M3 8l9-5 9 5-9 5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5'
       };
       var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24">' +
         '<path d="' + paths[key] + '" fill="none" stroke="#334155" stroke-width="1.7" ' +
@@ -624,11 +623,7 @@
       tool('layers', '▤', function () {
         u.layerDrawer.style().set('shown', !u.layerDrawer.style().get('shown'));
         setTool('layers');
-      }, 'Visibilidade das camadas'),
-      tool('compare', '◧', function () {
-        finishDrawing(); S.wipe = !S.wipe; u.split.setWipe(S.wipe); updateToolStyles();
-        setStatus(S.wipe ? 'Cortina ativa: arraste o divisor central.' : 'Quadros sincronizados. Ative ◧ para voltar à cortina.');
-      }, 'Alternar cortina deslizante / quadros sincronizados')
+      }, 'Visibilidade das camadas')
     ], style: {width: '40px', padding: '2px', margin: '0 7px 0 0', backgroundColor: '#ffffff',
       border: '1px solid ' + C.line, borderRadius: '7px'}});
     var selectStyle = {stretch: 'horizontal', height: '26px', fontSize: '10px', margin: '1px 0'};
@@ -702,7 +697,7 @@
   function updateToolStyles() {
     if (!S.ui.toolButtons) return;
     Object.keys(S.ui.toolButtons).forEach(function (key) {
-      var active = key === 'compare' ? S.wipe : key === 'charts' ? S.chartsOpen : S.tool === key;
+      var active = key === 'charts' ? S.chartsOpen : S.tool === key;
       S.ui.toolButtons[key].style().set({backgroundColor: active ? '#e7efff' : '#ffffff',
         color: active ? C.blue : C.ink});
     });
